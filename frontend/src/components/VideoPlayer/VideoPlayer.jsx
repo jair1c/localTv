@@ -1,144 +1,78 @@
 import { useEffect, useRef, useState } from 'react';
-import CastButton from '../CastButton/CastButton';
+import Hls from 'hls.js';
 import styles from './VideoPlayer.module.css';
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASES = ['/__backend', ''];
 
 export default function VideoPlayer({ channel }) {
-  const playerRef = useRef(null);
-  const clapprRef = useRef(null);
-  const [loading, setLoading] = useState(false);
+  const videoRef = useRef(null);
   const [error, setError] = useState(null);
-  const [streamUrl, setStreamUrl] = useState(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!channel?.slug) {
-      // Sin canal seleccionado
-      if (clapprRef.current) {
-        try {
-          clapprRef.current.destroy();
-        } catch (e) {
-          console.error('Error destroying player:', e);
-        }
-        clapprRef.current = null;
-      }
-      // Limpiar contenido del div
-      const playerDiv = document.getElementById('video-player');
-      if (playerDiv) {
-        playerDiv.innerHTML = '';
-      }
-      setError(null);
-      return;
-    }
+    if (!channel) return;
 
-    // Limpiar instancia anterior completamente
-    if (clapprRef.current) {
-      try {
-        clapprRef.current.destroy();
-      } catch (e) {
-        console.error('Error destroying previous player:', e);
-      }
-      clapprRef.current = null;
-    }
-
-    // Limpiar el contenido del div antes de crear nuevo player
-    const playerDiv = document.getElementById('video-player');
-    if (playerDiv) {
-      playerDiv.innerHTML = '';
-    }
-
+    let hls;
     setLoading(true);
     setError(null);
 
-    // Obtener la URL real del stream desde el backend
-    const fetchStreamUrl = async () => {
+    const loadStream = async () => {
       try {
-        const response = await fetch(`${BASE_URL}/api/streams/${channel.slug}`);
-        if (!response.ok) {
-          throw new Error('Error obteniendo URL del stream');
+        let streamUrl = null;
+
+        // 1. Intentar obtener stream desde backend
+        for (const base of API_BASES) {
+          try {
+            const res = await fetch(`${base}/api/streams/${channel.slug}`);
+            if (res.ok) {
+              const data = await res.json();
+              streamUrl = data.url;
+              break;
+            }
+          } catch {}
         }
 
-        const data = await response.json();
-        const realStreamUrl = data.url;
-        setStreamUrl(realStreamUrl);
-
-        // Crear nueva instancia de Clappr con la URL real del m3u8
-        if (window.Clappr) {
-          clapprRef.current = new window.Clappr.Player({
-            source: realStreamUrl,
-            parentId: '#video-player',
-            width: '100%',
-            height: '100%',
-            autoPlay: true,
-            mute: false,
-            poster: channel.logo_url || '',
-            hlsjsConfig: {
-              xhrSetup: (xhr, url) => {
-                xhr.setRequestHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-                xhr.setRequestHeader('Referer', 'https://tvtvhd.com/');
-              },
-            },
-          });
-          setError(null);
-        } else {
-          console.error('Clappr no está disponible en window');
-          setError('Player no disponible');
+        // 2. Si no hay backend → intentar usar directo
+        if (!streamUrl) {
+          if (channel.stream_url?.includes('.m3u8')) {
+            streamUrl = channel.stream_url;
+          } else {
+            // fallback iframe
+            videoRef.current.outerHTML = `<iframe src="${channel.stream_url}" style="width:100%;height:100%;border:none" allowfullscreen></iframe>`;
+            setLoading(false);
+            return;
+          }
         }
+
+        // 3. Reproducir con HLS
+        if (Hls.isSupported()) {
+          hls = new Hls();
+          hls.loadSource(streamUrl);
+          hls.attachMedia(videoRef.current);
+        } else if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
+          videoRef.current.src = streamUrl;
+        }
+
       } catch (err) {
-        console.error('Error cargando stream:', err);
-        setError(`Error: ${err.message}`);
+        console.error(err);
+        setError('No se pudo cargar el stream');
       } finally {
         setLoading(false);
       }
     };
 
-    fetchStreamUrl();
+    loadStream();
 
-    // Cleanup al desmontar o cambiar canal
     return () => {
-      if (clapprRef.current) {
-        try {
-          clapprRef.current.destroy();
-        } catch (e) {
-          console.error('Error in cleanup:', e);
-        }
-        clapprRef.current = null;
-      }
-      const playerDiv = document.getElementById('video-player');
-      if (playerDiv) {
-        playerDiv.innerHTML = '';
-      }
+      if (hls) hls.destroy();
     };
-  }, [channel?.slug]); // Solo re-ejecuta cuando cambia el slug del canal
+  }, [channel]);
 
   return (
     <div className={styles.playerWrapper}>
-      <div id="video-player" ref={playerRef} className={styles.player} />
-      {channel && streamUrl && (
-        <div className={styles.controls}>
-          <CastButton
-            streamUrl={streamUrl}
-            channelName={channel.name}
-            logoUrl={channel.logo_url}
-            loading={loading}
-          />
-        </div>
-      )}
-      {!channel && (
-        <div className={styles.placeholder}>
-          <p>Selecciona un canal para ver el stream</p>
-        </div>
-      )}
-      {loading && (
-        <div className={styles.overlay}>
-          <p>Cargando stream...</p>
-        </div>
-      )}
-      {error && (
-        <div className={styles.error}>
-          <p>{error}</p>
-        </div>
-      )}
+      {loading && <div className={styles.overlay}>Cargando...</div>}
+      {error && <div className={styles.error}>{error}</div>}
+      <video ref={videoRef} controls autoPlay className={styles.player} />
     </div>
   );
 }
