@@ -1,19 +1,18 @@
-// Detectar URL del backend dinámicamente
+// Detectar URL del backend dinámicamente.
+// En desarrollo usa FastAPI local; en Vercel usa el servicio backend bajo /__backend.
 const BASE_URL = (() => {
-  // Si hay variable de entorno, usarla
   if (import.meta.env.VITE_API_URL) {
     return import.meta.env.VITE_API_URL;
   }
-  // Si estamos en localhost (desarrollo), usar localhost:8000
+
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
     return 'http://localhost:8000';
   }
-  // Si estamos en Docker, usar el mismo host
-  return `http://${window.location.hostname}:8000`;
+
+  return '/__backend';
 })();
 
 export const api = {
-  // Canales (públicos)
   getChannels: async () => {
     const res = await fetch(`${BASE_URL}/api/channels/`);
     if (!res.ok) throw new Error('Error fetching channels');
@@ -26,14 +25,12 @@ export const api = {
     return res.json();
   },
 
-  // Categorías (públicas)
   getCategories: async () => {
     const res = await fetch(`${BASE_URL}/api/categories/`);
     if (!res.ok) throw new Error('Error fetching categories');
     return res.json();
   },
 
-  // Admin (requiere API key)
   validateApiKey: async (apiKey) => {
     const res = await fetch(`${BASE_URL}/api/channels`, {
       headers: { 'X-API-Key': apiKey },
