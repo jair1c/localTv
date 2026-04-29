@@ -6,6 +6,10 @@ from app.schemas.category import CategoryRead
 
 router = APIRouter(prefix="/api/categories", tags=["categories"])
 
+@router.get("", response_model=list[CategoryRead])
+def read_categories_no_slash(db: Session = Depends(get_db)):
+    return crud_categories.get_categories(db)
+
 @router.get("/", response_model=list[CategoryRead])
 def read_categories(db: Session = Depends(get_db)):
     return crud_categories.get_categories(db)
