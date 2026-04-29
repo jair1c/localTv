@@ -4,10 +4,19 @@ import styles from './VideoPlayer.module.css';
 
 const API_BASES = ['/__backend', ''];
 const LOAD_TIMEOUT_MS = 12000;
-
 const isHlsUrl = (url = '') => url.includes('.m3u8');
 
+const getInitials = (name = '') =>
+  name
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join('')
+    .toUpperCase();
+
 export default function VideoPlayer({ channel }) {
+  const wrapperRef = useRef(null);
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   const timeoutRef = useRef(null);
@@ -16,6 +25,8 @@ export default function VideoPlayer({ channel }) {
   const [mode, setMode] = useState('empty');
   const [streamUrl, setStreamUrl] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
 
   const iframeUrl = useMemo(() => {
     if (!channel?.stream_url) return '';
@@ -35,6 +46,7 @@ export default function VideoPlayer({ channel }) {
       setStreamUrl('');
       setLoading(false);
       setError(null);
+      setIsPlaying(false);
       return;
     }
 
@@ -43,6 +55,7 @@ export default function VideoPlayer({ channel }) {
     setStreamUrl('');
     setError(null);
     setLoading(true);
+    setIsPlaying(false);
 
     timeoutRef.current = setTimeout(() => {
       if (!cancelled) {
@@ -65,15 +78,10 @@ export default function VideoPlayer({ channel }) {
                 break;
               }
             }
-          } catch {
-            // Continuar con el siguiente origen.
-          }
+          } catch {}
         }
 
-        if (!url && isHlsUrl(channel.stream_url)) {
-          url = channel.stream_url;
-        }
-
+        if (!url && isHlsUrl(channel.stream_url)) url = channel.stream_url;
         if (cancelled) return;
 
         if (!url) {
@@ -116,9 +124,11 @@ export default function VideoPlayer({ channel }) {
     const handleReady = () => {
       setLoading(false);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      video.play().catch(() => {});
+      video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
     };
-
+    const handlePlay = () => setIsPlaying(true);
+    const handlePause = () => setIsPlaying(false);
+    const handleVolume = () => setIsMuted(video.muted);
     const handleError = () => {
       setLoading(false);
       setError('No se pudo reproducir este stream. Presiona reintentar.');
@@ -126,24 +136,21 @@ export default function VideoPlayer({ channel }) {
 
     video.addEventListener('loadedmetadata', handleReady);
     video.addEventListener('canplay', handleReady);
+    video.addEventListener('play', handlePlay);
+    video.addEventListener('pause', handlePause);
+    video.addEventListener('volumechange', handleVolume);
     video.addEventListener('error', handleError);
 
     if (Hls.isSupported()) {
-      const hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: true,
-        maxBufferLength: 30,
-      });
+      const hls = new Hls({ enableWorker: true, lowLatencyMode: true, maxBufferLength: 30 });
       hlsRef.current = hls;
       hls.loadSource(streamUrl);
       hls.attachMedia(video);
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (data?.fatal) {
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-            hls.startLoad();
-          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-            hls.recoverMediaError();
-          } else {
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+          else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+          else {
             handleError();
             hls.destroy();
           }
@@ -158,33 +165,50 @@ export default function VideoPlayer({ channel }) {
     return () => {
       video.removeEventListener('loadedmetadata', handleReady);
       video.removeEventListener('canplay', handleReady);
+      video.removeEventListener('play', handlePlay);
+      video.removeEventListener('pause', handlePause);
+      video.removeEventListener('volumechange', handleVolume);
       video.removeEventListener('error', handleError);
     };
   }, [mode, streamUrl]);
 
-  const retry = () => {
-    setReloadKey((key) => key + 1);
+  const retry = () => setReloadKey((key) => key + 1);
+
+  const togglePlay = () => {
+    const video = videoRef.current;
+    if (!video || mode !== 'hls') return;
+    if (video.paused) video.play().catch(() => {});
+    else video.pause();
+  };
+
+  const toggleMute = () => {
+    const video = videoRef.current;
+    if (!video || mode !== 'hls') return;
+    video.muted = !video.muted;
+    setIsMuted(video.muted);
+  };
+
+  const fullscreen = () => {
+    const target = wrapperRef.current;
+    if (!target) return;
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else target.requestFullscreen?.();
   };
 
   if (!channel) {
     return (
-      <div className={styles.playerWrapper}>
+      <div className={styles.playerWrapper} ref={wrapperRef}>
         <div className={styles.placeholder}>Selecciona un canal para reproducir</div>
       </div>
     );
   }
 
   return (
-    <div className={styles.playerWrapper}>
+    <div className={styles.playerWrapper} ref={wrapperRef}>
+      <div className={styles.backdropGlow} />
+
       {mode === 'hls' && (
-        <video
-          key={`${channel.id}-video-${reloadKey}`}
-          ref={videoRef}
-          controls
-          autoPlay
-          playsInline
-          className={styles.player}
-        />
+        <video key={`${channel.id}-video-${reloadKey}`} ref={videoRef} autoPlay playsInline className={styles.player} />
       )}
 
       {mode === 'iframe' && (
@@ -204,7 +228,40 @@ export default function VideoPlayer({ channel }) {
         />
       )}
 
-      {loading && <div className={styles.overlay}>Cargando {channel.name}...</div>}
+      <div className={styles.topOverlay}>
+        <div className={styles.channelIdentity}>
+          <div className={styles.logoBox}>
+            {channel.logo_url ? <img src={channel.logo_url} alt={channel.name} /> : <span>{getInitials(channel.name)}</span>}
+          </div>
+          <div>
+            <div className={styles.channelName}>{channel.name}</div>
+            <div className={styles.channelMeta}><span /> EN VIVO · {mode === 'hls' ? 'HLS HD' : 'Modo web'}</div>
+          </div>
+        </div>
+        <div className={styles.topActions}>
+          <button onClick={retry}>↻</button>
+          <button onClick={fullscreen}>⛶</button>
+        </div>
+      </div>
+
+      {mode === 'hls' && (
+        <div className={styles.bottomControls}>
+          <button className={styles.mainPlay} onClick={togglePlay}>{isPlaying ? '❚❚' : '▶'}</button>
+          <button onClick={toggleMute}>{isMuted ? '🔇' : '🔊'}</button>
+          <div className={styles.livePill}><span /> LIVE</div>
+          <div className={styles.spacer} />
+          <button onClick={retry}>Reintentar</button>
+          <button onClick={fullscreen}>Pantalla completa</button>
+        </div>
+      )}
+
+      {mode === 'iframe' && (
+        <div className={styles.iframeHint}>
+          Este canal usa reproductor externo. Si no carga, presiona Reintentar.
+        </div>
+      )}
+
+      {loading && <div className={styles.overlay}><div className={styles.loader} />Cargando {channel.name}...</div>}
 
       {error && (
         <div className={styles.error}>
