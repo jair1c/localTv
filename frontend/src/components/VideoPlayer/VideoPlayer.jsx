@@ -27,12 +27,17 @@ export default function VideoPlayer({ channel }) {
   const [reloadKey, setReloadKey] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [iframeCompatibleMode, setIframeCompatibleMode] = useState(false);
 
   const iframeUrl = useMemo(() => {
     if (!channel?.stream_url) return '';
     const separator = channel.stream_url.includes('?') ? '&' : '?';
     return `${channel.stream_url}${separator}_reload=${reloadKey}`;
   }, [channel?.stream_url, reloadKey]);
+
+  useEffect(() => {
+    setIframeCompatibleMode(false);
+  }, [channel?.id]);
 
   useEffect(() => {
     if (hlsRef.current) {
@@ -174,6 +179,11 @@ export default function VideoPlayer({ channel }) {
 
   const retry = () => setReloadKey((key) => key + 1);
 
+  const enableCompatibleMode = () => {
+    setIframeCompatibleMode(true);
+    setReloadKey((key) => key + 1);
+  };
+
   const togglePlay = () => {
     const video = videoRef.current;
     if (!video || mode !== 'hls') return;
@@ -213,13 +223,17 @@ export default function VideoPlayer({ channel }) {
 
       {mode === 'iframe' && (
         <iframe
-          key={`${channel.id}-iframe-${reloadKey}`}
+          key={`${channel.id}-iframe-${reloadKey}-${iframeCompatibleMode ? 'compatible' : 'safe'}`}
           src={iframeUrl}
           title={channel.name}
           className={styles.player}
           allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
-          referrerPolicy="no-referrer"
+          sandbox={
+            iframeCompatibleMode
+              ? 'allow-scripts allow-same-origin allow-forms allow-presentation allow-popups allow-popups-to-escape-sandbox'
+              : 'allow-scripts allow-same-origin allow-forms allow-presentation'
+          }
+          referrerPolicy={iframeCompatibleMode ? 'strict-origin-when-cross-origin' : 'no-referrer'}
           allowFullScreen
           onLoad={() => {
             setLoading(false);
@@ -235,10 +249,11 @@ export default function VideoPlayer({ channel }) {
           </div>
           <div>
             <div className={styles.channelName}>{channel.name}</div>
-            <div className={styles.channelMeta}><span /> EN VIVO · {mode === 'hls' ? 'HLS HD' : 'Modo web'}</div>
+            <div className={styles.channelMeta}><span /> EN VIVO · {mode === 'hls' ? 'HLS HD' : iframeCompatibleMode ? 'Modo compatible' : 'Modo protegido'}</div>
           </div>
         </div>
         <div className={styles.topActions}>
+          {mode === 'iframe' && !iframeCompatibleMode && <button onClick={enableCompatibleMode}>Compatible</button>}
           <button onClick={retry}>↻</button>
           <button onClick={fullscreen}>⛶</button>
         </div>
@@ -257,7 +272,10 @@ export default function VideoPlayer({ channel }) {
 
       {mode === 'iframe' && (
         <div className={styles.iframeHint}>
-          Este canal usa reproductor externo. Si no carga, presiona Reintentar.
+          {iframeCompatibleMode
+            ? 'Modo compatible activo. Puede abrir publicidad del proveedor externo.'
+            : 'Si el botón Play no responde, activa Modo compatible.'}
+          {!iframeCompatibleMode && <button onClick={enableCompatibleMode}>Activar compatible</button>}
         </div>
       )}
 
