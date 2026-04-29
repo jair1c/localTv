@@ -7,6 +7,9 @@
     "build": "vite build",
     "preview": "vite preview"
   },
+  "dependencies": {
+    "hls.js": "^1.6.15"
+  },
   "devDependencies": {
     "@vitejs/plugin-react": "^6.0.1",
     "react": "^19.2.5",
